@@ -9,16 +9,16 @@
 #define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
 #define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-// select which pin will trigger the configuration portal when set to LOW
-#define Setup_btn 4
+
+#define Setup_btn 4 // Button to trigger WiFi setup mode
 
 int timeout = 120; // seconds to run for
 
 // Instructions array
 const char* instructions[] = {
-  "1) Open Wifi Settings",
-  "2) Connect to Wifi-Manager",
-  "3) Go to the provided webadress",
+  "1) Open WiFi Settings",
+  "2) Connect to WiFi-Manager",
+  "3) Go to the web address",
   "4) Enter WiFi Credentials"
 };
 const int numInstructions = sizeof(instructions) / sizeof(instructions[0]);
@@ -28,79 +28,89 @@ int currentInstructionIndex = 0;
 const char* webAddress = "192.168.4.1";
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200); // Set the baud rate to 115200
   if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
     Serial.println(F("SSD1306 allocation failed"));
-    while (true);                          // Don't proceed, loop forever
+    while (true);  // Don't proceed, loop forever
   }
-  delay(2000);                       // Pause for 2 seconds
+  
+  // Initial display setup
   display.clearDisplay();
-  display.setTextSize(1);             // Normal 1:1 pixel scale
-  display.setTextColor(SSD1306_WHITE);// Draw white text
-  display.setCursor(0,0);             // Start at top-left corner
-  centerText_singleline("Hello!!",2);
-  display.display();
-  delay(2000);
-  WiFi.mode(WIFI_STA); // explicitly set mode, esp defaults to STA+AP  
-  // put your setup code here, to run once:
-  Serial.begin(115200);
-  centerText_singleline("Starting...",1);
-  pinMode(Setup_btn, INPUT_PULLUP);
-}
-void loadcell();
-
-
-
-  // put your main code here, to run repeatedly:
-}
-void start_setup() {
-  if (digitalRead(Setup_btn) == LOW) {
-      WiFiManager wm;
-      wm.setConfigPortalTimeout(timeout);
-  // Calculate the remaining time
-  int remainingTime = timeout;
-  // Clear the display buffer
-  display.clearDisplay();
-  // Set text size and color
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
-  // Print the current instruction
-  display.setCursor(0, 0);
-  display.println(instructions[currentInstructionIndex]);
-  // Print the web address
-  display.setCursor(0, SCREEN_HEIGHT - 8); // Adjust y-position for text size 1
-  display.print(webAddress);
-  // Calculate the position for the countdown timer
-  display.setCursor(SCREEN_WIDTH - 30, SCREEN_HEIGHT - 8); // Adjust y-position for text size 1
-  // Print the countdown timer
-  display.print(remainingTime);
-  display.print(" s");
-  // Update the display buffer
+  centerText_singleline("Hello!!", 2);
   display.display();
-  // Delay for one second
-  delay(1000);
-  // Decrement the countdown time
-  timeout--;
-  // Change the instruction every 2 seconds
-  if (timeout % 2 == 0) {
-    currentInstructionIndex = (currentInstructionIndex + 1) % numInstructions;
-  }
-  if(timeout == 0){
-    centerText_singleline("System timed Out.. Restarting",1);
-    loadcell();
-  }
-  if (!wm.startConfigPortal("WiFi-Manager") || timeout == 0) {
-      centerText_singleline("failed to connect and hit timeout",1);
-      delay(3000);
-      //reset and try again, or maybe put it to deep sleep
-      ESP.restart();
-      delay(5000);
+  delay(2000);
+
+  // Set up WiFi mode
+  WiFi.mode(WIFI_STA); // Set WiFi mode to station only
+  pinMode(Setup_btn, INPUT_PULLUP); // Set the setup button as input with pull-up
+}
+
+void loop() {
+  start_setup(); // Continuously check if the setup button is pressed
+}
+
+void start_setup() {
+  if (digitalRead(Setup_btn) == LOW) { // Check if the setup button is pressed
+    WiFiManager wm;
+    wm.setConfigPortalTimeout(timeout);
+
+    while (timeout > 0) {
+      // Clear the display buffer
+      display.clearDisplay();
+
+      // Print the current instruction
+      display.setTextSize(1);
+      display.setCursor(0, 0);
+      display.println(instructions[currentInstructionIndex]);
+
+      // Print the web address
+      display.setCursor(0, SCREEN_HEIGHT - 8); // Adjust y-position for text size 1
+      display.print(webAddress);
+
+      // Print the countdown timer
+      display.setCursor(SCREEN_WIDTH - 30, SCREEN_HEIGHT - 8);
+      display.print(timeout);
+      display.print(" s");
+
+      // Update the display buffer
+      display.display();
+
+      delay(1000); // Delay for one second
+
+      // Decrement the countdown time
+      timeout--;
+
+      // Change the instruction every 2 seconds
+      if (timeout % 2 == 0) {
+        currentInstructionIndex = (currentInstructionIndex + 1) % numInstructions;
+      }
+
+      // Attempt to start the configuration portal
+      if (wm.startConfigPortal("WiFi-Manager")) {
+        // Successfully connected to WiFi
+        display.clearDisplay();
+        display.setTextSize(1);
+        centerText_singleline("Connected successfully to:", 1);
+        display.setCursor(0, 16);
+        display.print(wm.getWiFiSSID());
+        display.display();
+        delay(3000);
+        return; // Exit the function after successful connection
+      }
+
+      // If timeout reaches 0, restart the ESP
+      if (timeout == 0) {
+        centerText_singleline("System timed out. Restarting...", 1);
+        display.display();
+        delay(3000);
+        ESP.restart(); // Restart the ESP32
+      }
     }
-    display.println(F("Connected succesfully to"));
-    centerText_singleline(wm.getWiFiSSID(),1);
-    loadcell();
   }
 }
+
 void centerText_singleline(String text, int textSize) {
   display.setTextSize(textSize);
   display.setTextColor(SSD1306_WHITE);
@@ -109,53 +119,7 @@ void centerText_singleline(String text, int textSize) {
   display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
   int x = (SCREEN_WIDTH - w) / 2;
   int y = (SCREEN_HEIGHT - h) / 2;
-  display.setCursor(x, y+5);
+  display.setCursor(x, y + 5);
   display.println(text);
+  display.display();
 }
-void printWrapped(String text, int textSize) {
-  display.setTextSize(textSize);
-  display.setTextColor(SSD1306_WHITE);
-  int16_t x1, y1;
-  uint16_t w, h;
-  int lineHeight = 8 * textSize; // Approximate height of text
-  int cursorX = 0;
-  int cursorY = 0;
-  String line = "";
-  for (int i = 0; i < text.length(); i++) {
-    char c = text.charAt(i);
-    if (c == ' ' || c == '\n' || i == text.length() - 1) {
-      if (i == text.length() - 1) line += c; // Add last character
-
-      display.getTextBounds(line, 0, 0, &x1, &y1, &w, &h);
-      if (cursorX + w > SCREEN_WIDTH) {
-        cursorX = 0;
-        cursorY += lineHeight;
-        if (cursorY + lineHeight > SCREEN_HEIGHT) {
-          break; // Stop printing if we exceed display height
-        }
-      }
-
-      display.setCursor(cursorX, cursorY);
-      display.print(line);
-      line = "";
-      cursorX += w;
-
-      if (c == '\n') {
-        cursorX = 0;
-        cursorY += lineHeight;
-      }
-    } else {
-      line += c;
-    }
-  }
-}
-void loop() {
-  // is configuration portal requested?
-  start_setup();
-    //reset settings - for testing
-    //wm.resetSettings();
-    // set configportal timeout
-    
-    //if you get here you have connected to the WiFi
-
-  }
